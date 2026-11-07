@@ -30,19 +30,27 @@ npm i
 npm run dev
 ```
 
-## Nearby page (Google Places)
+## Nearby page (Longdo Map / Google Places)
 
 `/nearby` shows nearby stays, convenience stores, cafés, restaurants and petrol stations
-around an attraction or the visitor's location. Results come from Google Places API (New)
-Nearby Search through `server/api/nearby.get.ts`.
+around an attraction or the visitor's location. Places are fetched by
+`server/api/nearby.get.ts`, which prefers whichever key is configured:
 
-1. In Google Cloud Console enable **Places API (New)** and create an API key.
-2. Put it in `.env` (never commit it):
+1. **Longdo Map** (Nearby POI) — used when `NUXT_LONGDO_KEY` is set. Categories map to the
+   tags `hotel`, `convenience_store`, `coffee_shop`, `restaurant` and `gas_station`.
+2. **Google Places API (New)** (Nearby Search) — used when only `NUXT_GOOGLE_PLACES_KEY` is set.
+3. **Sample data** — used when neither key is set; the page labels it clearly.
+
+Create a Longdo key at <https://api.longdo.com/console> (free tier: 100k requests/month)
+or a Google key with **Places API (New)** enabled in Google Cloud Console, then put it in
+`.env` (never commit it):
 
 ```sh
-NUXT_GOOGLE_PLACES_KEY=your-key
+NUXT_LONGDO_KEY=your-longdo-key
+NUXT_GOOGLE_PLACES_KEY=your-google-key   # optional fallback
 ```
 
-Without a key the page still works, but shows clearly-labelled sample rows instead of live
-Google results. The key is only read on the server — it is never sent to the browser.
+The key is only read on the server — it is never sent to the browser. Longdo results carry
+name, address and coordinates (no ratings or opening hours); Google results add rating,
+review count and open/closed state.
 

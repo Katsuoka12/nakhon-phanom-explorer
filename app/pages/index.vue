@@ -345,8 +345,8 @@ function locate() {
         </div>
 
         <p class="mt-6 inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-          <MapPin class="h-3 w-3 text-primary" /> ข้อมูลสถานที่จาก Google Maps ·
-          เลือกจุดอ้างอิงได้ในหน้าใกล้เคียง
+          <MapPin class="h-3 w-3 text-primary" /> ข้อมูลสถานที่จาก Longdo Map /
+          Google Maps · เลือกจุดอ้างอิงได้ในหน้าใกล้เคียง
         </p>
       </div>
     </section>

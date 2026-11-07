@@ -28,7 +28,8 @@ useSeoMeta({
   twitterCard: "summary_large_image",
 });
 
-type NearbyResponse = { source: "google" | "sample"; places: NearbyPlace[] };
+type NearbySource = "longdo" | "google" | "sample";
+type NearbyResponse = { source: NearbySource; places: NearbyPlace[] };
 
 const route = useRoute();
 const router = useRouter();
@@ -59,7 +60,16 @@ const results = computed(() =>
     .sort((a, b) => a.km - b.km),
 );
 
-const usingSample = computed(() => data.value?.source === "sample");
+const source = computed<NearbySource | undefined>(() => data.value?.source);
+const usingSample = computed(() => source.value === "sample");
+const sourceLabel = computed(() => {
+  if (source.value === "longdo") return "ข้อมูลจาก Longdo Map";
+  if (source.value === "google") return "ข้อมูลจาก Google Maps";
+  return "ข้อมูลตัวอย่าง";
+});
+const mapLinkLabel = computed(() =>
+  source.value === "longdo" ? "เปิดใน Longdo Map" : "เปิดใน Google Maps",
+);
 const errorMessage = computed(
   () => error.value?.statusMessage || error.value?.message || "โหลดข้อมูลไม่สำเร็จ",
 );
@@ -120,7 +130,7 @@ function locate() {
           class="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-[11px] text-muted-foreground shadow-soft"
         >
           <MapPin class="h-3.5 w-3.5 text-primary" />
-          {{ usingSample ? "ข้อมูลตัวอย่าง" : "ข้อมูลจาก Google Maps" }}
+          {{ sourceLabel }}
         </span>
       </div>
 
@@ -183,9 +193,10 @@ function locate() {
         v-if="usingSample && !pending"
         class="mt-4 rounded-2xl border border-primary/20 bg-primary/5 px-4 py-3 text-[11px] leading-relaxed text-muted-foreground"
       >
-        ยังไม่ได้ตั้งค่า Google Places API key (<code class="text-primary">NUXT_GOOGLE_PLACES_KEY</code>)
-        — ตอนนี้จึงแสดงรายการตัวอย่างเพื่อให้เห็นหน้าตาและการทำงานของหน้า
-        เมื่อใส่คีย์แล้ว รายการจะถูกดึงจาก Google Maps จริงตามตำแหน่งที่เลือก
+        ยังไม่ได้ตั้งค่าคีย์แผนที่ — ตั้ง
+        <code class="text-primary">NUXT_LONGDO_KEY</code> เพื่อดึงข้อมูลจาก Longdo Map
+        หรือ <code class="text-primary">NUXT_GOOGLE_PLACES_KEY</code> สำหรับ Google Maps<br />
+        ตอนนี้จึงแสดงรายการตัวอย่างเพื่อให้เห็นหน้าตาและการทำงานของหน้า
       </p>
 
       <div class="mt-5 flex flex-wrap items-center justify-between gap-2">
@@ -271,7 +282,7 @@ function locate() {
             rel="noopener noreferrer"
             class="mt-3 inline-flex items-center gap-1 text-[11px] font-medium text-primary hover:underline"
           >
-            เปิดใน Google Maps <ExternalLink class="h-3 w-3" />
+            {{ mapLinkLabel }} <ExternalLink class="h-3 w-3" />
           </a>
         </article>
       </div>
@@ -284,8 +295,24 @@ function locate() {
       </p>
 
       <p class="mt-8 text-[10.5px] leading-relaxed text-muted-foreground">
-        ข้อมูลสถานที่จาก Google Maps (Places API) · ระยะทางคำนวณจากจุดอ้างอิงแบบเส้นตรง
-        · ราคาและเวลาเปิด-ปิดอาจเปลี่ยนแปลง ควรตรวจสอบอีกครั้งก่อนเดินทาง
+        ข้อมูลสถานที่จาก
+        <a
+          v-if="source === 'longdo'"
+          href="https://map.longdo.com"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="text-primary hover:underline"
+        >Longdo Map (POI API)</a>
+        <a
+          v-else-if="source === 'google'"
+          href="https://maps.google.com"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="text-primary hover:underline"
+        >Google Maps (Places API)</a>
+        <span v-else>ชุดข้อมูลตัวอย่าง</span>
+        · ระยะทางคำนวณจากจุดอ้างอิงแบบเส้นตรง · ราคาและเวลาเปิด-ปิดอาจเปลี่ยนแปลง
+        ควรตรวจสอบอีกครั้งก่อนเดินทาง
       </p>
     </main>
   </div>

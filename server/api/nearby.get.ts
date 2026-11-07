@@ -19,12 +19,31 @@ type Sample = {
   openNow: boolean;
 };
 
+type LongdoPlace = {
+  id?: string;
+  name?: string;
+  lat?: number;
+  lon?: number;
+  address?: string;
+  type?: string;
+  obsoleted?: boolean;
+};
+
 const TYPES: Record<CategoryId, { includedType: string; radius: number }> = {
   stay: { includedType: "lodging", radius: 8000 },
   convenience: { includedType: "convenience_store", radius: 4000 },
   cafe: { includedType: "cafe", radius: 4000 },
   restaurant: { includedType: "restaurant", radius: 4000 },
   fuel: { includedType: "gas_station", radius: 10000 },
+};
+
+// Longdo Map uses its own POI tag names and takes the search radius as a span.
+const LONGDO: Record<CategoryId, { tag: string; span: string }> = {
+  stay: { tag: "hotel", span: "10km" },
+  convenience: { tag: "convenience_store", span: "6km" },
+  cafe: { tag: "coffee_shop", span: "8km" },
+  restaurant: { tag: "restaurant", span: "8km" },
+  fuel: { tag: "gas_station", span: "12km" },
 };
 
 const SAMPLES: Record<CategoryId, Sample[]> = {
@@ -107,6 +126,97 @@ function samplePlaces(type: CategoryId, lat: number, lng: number) {
   });
 }
 
+function errorMessage(cause: unknown) {
+  const data = (cause as { data?: unknown })?.data;
+
+  if (typeof data === "string" && data.trim()) return data.trim().slice(0, 180);
+
+  if (data && typeof data === "object") {
+    const payload = data as { error?: { message?: string }; message?: string };
+    const message = payload.error?.message ?? payload.message;
+    if (message) return message;
+  }
+
+  return cause instanceof Error ? cause.message : "ไม่ทราบสาเหตุ";
+}
+
+async function longdoPlaces(key: string, type: CategoryId, lat: number, lng: number) {
+  const { tag, span } = LONGDO[type];
+
+  const response = await $fetch<{ data?: LongdoPlace[] }>(
+    "https://api.longdo.com/POIService/json/search",
+    {
+      query: { lon: lng, lat, span, tag, limit: 15, locale: "th", key },
+      timeout: 12000,
+    },
+  );
+
+  const seen = new Set<string>();
+
+  return (response.data ?? [])
+    .filter((place) => place.type === "poi" && !place.obsoleted)
+    .filter((place) => typeof place.name === "string" && place.name.trim().length > 0)
+    .filter((place) => Number.isFinite(place.lat) && Number.isFinite(place.lon))
+    .filter((place) => {
+      const id = place.id ?? `${place.name}:${place.lat}:${place.lon}`;
+      if (seen.has(id)) return false;
+      seen.add(id);
+      return true;
+    })
+    .map((place, index) => ({
+      id: place.id ?? `longdo-${type}-${index}`,
+      name: place.name!.trim(),
+      address: place.address ?? "",
+      lat: place.lat!,
+      lng: place.lon!,
+      mapsUrl: `https://map.longdo.com/?lon=${place.lon}&lat=${place.lat}&zoom=17`,
+      category: type,
+    }));
+}
+
+async function googlePlaces(key: string, type: CategoryId, lat: number, lng: number) {
+  const { includedType, radius } = TYPES[type];
+
+  const response = await $fetch<{ places?: GooglePlace[] }>(
+    "https://places.googleapis.com/v1/places:searchNearby",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": key,
+        "X-Goog-FieldMask":
+          "places.id,places.displayName,places.formattedAddress,places.location,places.rating,places.userRatingCount,places.currentOpeningHours.openNow,places.googleMapsUri",
+      },
+      body: {
+        includedTypes: [includedType],
+        maxResultCount: 15,
+        rankPreference: "DISTANCE",
+        languageCode: "th",
+        regionCode: "TH",
+        locationRestriction: {
+          circle: {
+            center: { latitude: lat, longitude: lng },
+            radius,
+          },
+        },
+      },
+    },
+  );
+
+  return (response.places ?? []).map((place, index) => ({
+    id: place.id ?? `${type}-${index}`,
+    name: place.displayName?.text ?? "ไม่ทราบชื่อ",
+    address: place.formattedAddress ?? "",
+    lat: place.location?.latitude ?? lat,
+    lng: place.location?.longitude ?? lng,
+    rating: place.rating,
+    reviews: place.userRatingCount,
+    openNow: place.currentOpeningHours?.openNow,
+    mapsUrl: place.googleMapsUri,
+    category: type,
+  }));
+}
+
 export default defineEventHandler(async (event) => {
   const query = getQuery(event);
   const lat = Number(query.lat);
@@ -121,60 +231,31 @@ export default defineEventHandler(async (event) => {
   }
 
   const config = useRuntimeConfig(event);
-  const apiKey = String(config.googlePlacesKey ?? "").trim();
+  const longdoKey = String(config.longdoKey ?? "").trim();
+  const googleKey = String(config.googlePlacesKey ?? "").trim();
+  const failures: string[] = [];
 
-  if (!apiKey) {
-    return { source: "sample", places: samplePlaces(type, lat, lng) };
+  if (longdoKey) {
+    try {
+      const places = await longdoPlaces(longdoKey, type, lat, lng);
+      return { source: "longdo" as const, places };
+    } catch (cause) {
+      failures.push(`Longdo Map: ${errorMessage(cause)}`);
+    }
   }
 
-  const { includedType, radius } = TYPES[type];
-
-  try {
-    const response = await $fetch<{ places?: GooglePlace[] }>(
-      "https://places.googleapis.com/v1/places:searchNearby",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Goog-Api-Key": apiKey,
-          "X-Goog-FieldMask":
-            "places.id,places.displayName,places.formattedAddress,places.location,places.rating,places.userRatingCount,places.currentOpeningHours.openNow,places.googleMapsUri",
-        },
-        body: {
-          includedTypes: [includedType],
-          maxResultCount: 15,
-          rankPreference: "DISTANCE",
-          languageCode: "th",
-          regionCode: "TH",
-          locationRestriction: {
-            circle: {
-              center: { latitude: lat, longitude: lng },
-              radius,
-            },
-          },
-        },
-      },
-    );
-
-    const places = (response.places ?? []).map((place, index) => ({
-      id: place.id ?? `${type}-${index}`,
-      name: place.displayName?.text ?? "ไม่ทราบชื่อ",
-      address: place.formattedAddress ?? "",
-      lat: place.location?.latitude ?? lat,
-      lng: place.location?.longitude ?? lng,
-      rating: place.rating,
-      reviews: place.userRatingCount,
-      openNow: place.currentOpeningHours?.openNow,
-      mapsUrl: place.googleMapsUri,
-      category: type,
-    }));
-
-    return { source: "google", places };
-  } catch (cause) {
-    const reason =
-      (cause as { data?: { error?: { message?: string } } })?.data?.error?.message ??
-      (cause instanceof Error ? cause.message : "เรียก Google Places API ไม่สำเร็จ");
-
-    throw createError({ statusCode: 502, statusMessage: reason });
+  if (googleKey) {
+    try {
+      const places = await googlePlaces(googleKey, type, lat, lng);
+      return { source: "google" as const, places };
+    } catch (cause) {
+      failures.push(`Google Places: ${errorMessage(cause)}`);
+    }
   }
+
+  if (failures.length) {
+    throw createError({ statusCode: 502, statusMessage: failures.join(" · ") });
+  }
+
+  return { source: "sample" as const, places: samplePlaces(type, lat, lng) };
 });

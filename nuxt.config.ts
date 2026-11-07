@@ -3,7 +3,9 @@ import tailwindcss from "@tailwindcss/vite";
 export default defineNuxtConfig({
   compatibilityDate: "2026-11-06",
   runtimeConfig: {
-    // Secrets stay server-side: override with NUXT_GOOGLE_PLACES_KEY.
+    // Secrets stay server-side. Nearby places prefers Longdo Map when its key is
+    // set, then Google Places, and falls back to sample data when both are empty.
+    longdoKey: "",
     googlePlacesKey: "",
   },
   devtools: { enabled: false },
