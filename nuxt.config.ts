@@ -7,6 +7,8 @@ export default defineNuxtConfig({
     // set, then Google Places, and falls back to sample data when both are empty.
     longdoKey: "",
     googlePlacesKey: "",
+    // WeatherAPI key for the weather panel on /nearby (server-side only).
+    weatherApiKey: "",
   },
   devtools: { enabled: false },
   css: ["leaflet/dist/leaflet.css", "~/assets/css/main.css"],

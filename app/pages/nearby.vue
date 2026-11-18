@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import {
   ArrowLeft,
   Clock,
   Compass,
   Crosshair,
   ExternalLink,
+  Layers,
   MapPin,
   Star,
 } from "@lucide/vue";
@@ -21,9 +22,9 @@ import { PLACES, distanceKm, type Place } from "~/lib/places";
 useSeoMeta({
   title: "ใกล้เคียง — ที่พัก ร้านค้า คาเฟ่ และปั๊มน้ำมัน | TiewNakhon",
   description:
-    "เลือกจุดอ้างอิงในจังหวัดนครพนม แล้วดูที่พัก ร้านสะดวกซื้อ คาเฟ่ ร้านอาหาร และปั๊มน้ำมันใกล้เคียง เรียงตามระยะทาง",
+    "เลือกจุดอ้างอิงในจังหวัดนครพนม แล้วดูที่พัก ร้านสะดวกซื้อ คาเฟ่ ร้านอาหาร และปั๊มน้ำมันใกล้เคียง เรียงตามระยะทาง พร้อมแผนที่ 3D",
   ogTitle: "ใกล้เคียง — TiewNakhon",
-  ogDescription: "ที่พัก ร้านค้า คาเฟ่ ร้านอาหาร และปั๊มน้ำมันรอบจุดที่คุณเลือก",
+  ogDescription: "ที่พัก ร้านค้า คาเฟ่ ร้านอาหาร และปั๊มน้ำมันรอบจุดที่คุณเลือก พร้อมแผนที่ 3D",
   ogType: "website",
   twitterCard: "summary_large_image",
 });
@@ -40,9 +41,11 @@ const initialCategory = route.query.category;
 const category = ref<CategoryId>(isCategoryId(initialCategory) ? initialCategory : "stay");
 const refId = ref(FIRST.id);
 const refPoint = ref({ label: FIRST.name, lat: FIRST.lat, lng: FIRST.lng });
+const selectedId = ref<string | null>(null);
 const geoMsg = ref("");
 
 watch(category, (value) => {
+  selectedId.value = null;
   router.replace({ query: { ...route.query, category: value } });
 });
 
@@ -70,12 +73,37 @@ const sourceLabel = computed(() => {
 const mapLinkLabel = computed(() =>
   source.value === "longdo" ? "เปิดใน Longdo Map" : "เปิดใน Google Maps",
 );
+const longdoMapUrl = computed(
+  () =>
+    `https://map.longdo.com/?lon=${refPoint.value.lng}&lat=${refPoint.value.lat}&zoom=17`,
+);
 const errorMessage = computed(
   () => error.value?.statusMessage || error.value?.message || "โหลดข้อมูลไม่สำเร็จ",
 );
 
+const mapCard = ref<HTMLElement | null>(null);
+const selectedPlace = computed(
+  () => results.value.find((place) => place.id === selectedId.value) ?? null,
+);
+const selectedNumber = computed(() =>
+  selectedPlace.value ? results.value.indexOf(selectedPlace.value) + 1 : 0,
+);
+
+/** Selecting a card also makes sure the map (and its highlighted pin) is on screen. */
+function selectPlace(id: string) {
+  selectedId.value = id;
+  nextTick(() => {
+    const card = mapCard.value;
+    if (!card) return;
+    const rect = card.getBoundingClientRect();
+    const visible = rect.top < window.innerHeight - 120 && rect.bottom > 120;
+    if (!visible) card.scrollIntoView({ behavior: "smooth", block: "center" });
+  });
+}
+
 function choosePlace(place: Place) {
   refId.value = place.id;
+  selectedId.value = null;
   refPoint.value = { label: place.name, lat: place.lat, lng: place.lng };
 }
 
@@ -89,6 +117,7 @@ function locate() {
     (pos) => {
       const point = { lat: pos.coords.latitude, lng: pos.coords.longitude };
       refId.value = "me";
+      selectedId.value = null;
       refPoint.value = { label: "ตำแหน่งของคุณ", ...point };
       geoMsg.value = "";
     },
@@ -113,7 +142,7 @@ function locate() {
       </NuxtLink>
 
       <div class="mt-4 flex flex-wrap items-end justify-between gap-4">
-        <div>
+        <div class="min-w-0">
           <span
             class="inline-flex items-center gap-1.5 rounded-full border border-primary/20 bg-primary/5 px-3 py-1 text-xs font-medium text-primary"
           >
@@ -171,7 +200,7 @@ function locate() {
       </section>
 
       <!-- categories -->
-      <div class="panel-scroll mt-6 flex gap-2 overflow-x-auto pb-1">
+      <div class="panel-scroll mt-5 flex gap-2 overflow-x-auto pb-1">
         <button
           v-for="item in CATEGORIES"
           :key="item.id"
@@ -189,110 +218,207 @@ function locate() {
         </button>
       </div>
 
-      <p
-        v-if="usingSample && !pending"
-        class="mt-4 rounded-2xl border border-primary/20 bg-primary/5 px-4 py-3 text-[11px] leading-relaxed text-muted-foreground"
-      >
-        ยังไม่ได้ตั้งค่าคีย์แผนที่ — ตั้ง
-        <code class="text-primary">NUXT_LONGDO_KEY</code> เพื่อดึงข้อมูลจาก Longdo Map
-        หรือ <code class="text-primary">NUXT_GOOGLE_PLACES_KEY</code> สำหรับ Google Maps<br />
-        ตอนนี้จึงแสดงรายการตัวอย่างเพื่อให้เห็นหน้าตาและการทำงานของหน้า
-      </p>
+      <WeatherPanel
+        class="mt-5"
+        :lat="refPoint.lat"
+        :lng="refPoint.lng"
+        :label="refPoint.label"
+      />
 
-      <div class="mt-5 flex flex-wrap items-center justify-between gap-2">
-        <p class="text-[11px] text-muted-foreground">
-          {{ pending ? "กำลังโหลด…" : `${results.length} สถานที่ · เรียงตามระยะทาง` }}
-        </p>
-        <NuxtLink to="/#map" class="text-[11px] text-primary hover:underline">
-          ดูจุดอ้างอิงบนแผนที่ →
-        </NuxtLink>
-      </div>
-
-      <!-- loading -->
-      <div v-if="pending" class="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        <div v-for="n in 6" :key="n" class="h-40 animate-pulse rounded-3xl bg-muted" />
-      </div>
-
-      <!-- error -->
       <div
-        v-else-if="error"
-        class="mt-4 rounded-3xl border border-destructive/30 bg-card p-6 shadow-soft"
+        class="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1fr)_348px] lg:items-start xl:grid-cols-[minmax(0,1fr)_392px]"
       >
-        <h2 class="font-display text-base">โหลดข้อมูลไม่สำเร็จ</h2>
-        <p class="mt-1 text-xs leading-relaxed text-muted-foreground">{{ errorMessage }}</p>
-        <button
-          type="button"
-          class="mt-4 inline-flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-[13px] font-medium text-primary-foreground shadow-soft"
-          @click="refresh()"
-        >
-          ลองอีกครั้ง
-        </button>
-      </div>
+        <aside ref="mapCard" class="order-first min-w-0 lg:order-2 lg:sticky lg:top-24">
+          <div class="overflow-hidden rounded-3xl border border-border/80 bg-card shadow-soft">
+            <div class="flex items-center justify-between gap-3 border-b border-border/70 px-4 py-2.5">
+              <div class="flex items-center gap-2.5">
+                <span class="grid h-8 w-8 place-items-center rounded-xl bg-secondary text-primary">
+                  <Layers class="h-4 w-4" />
+                </span>
+                <div class="min-w-0">
+                  <p class="font-display text-[12.5px] leading-tight">แผนที่ 3D</p>
+                  <p class="max-w-[190px] truncate text-[10px] leading-tight text-muted-foreground">
+                    <template v-if="selectedPlace">
+                      หมุด {{ selectedNumber }} · {{ selectedPlace.name }}
+                    </template>
+                    <template v-else>Longdo Map · {{ results.length }} หมุด</template>
+                  </p>
+                </div>
+              </div>
+              <button
+                v-if="selectedPlace"
+                type="button"
+                class="inline-flex shrink-0 items-center gap-1 rounded-full border border-border bg-card px-2 py-0.5 text-[10px] text-muted-foreground transition hover:border-primary/40 hover:text-primary"
+                @click="selectedId = null"
+              >
+                ดูทั้งหมด
+              </button>
+              <span
+                v-else
+                class="hidden shrink-0 rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground sm:inline"
+              >
+                ลากเพื่อหมุน
+              </span>
+            </div>
 
-      <!-- results -->
-      <div v-else-if="results.length" class="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        <article
-          v-for="place in results"
-          :key="place.id"
-          class="group relative overflow-hidden rounded-3xl border border-border/80 bg-card p-4 shadow-soft transition duration-300 hover:-translate-y-1 hover:border-primary/35 hover:shadow-lift"
-        >
-          <div class="flex items-start justify-between gap-2">
-            <span
-              class="grid h-10 w-10 place-items-center rounded-xl bg-secondary text-primary transition group-hover:bg-primary group-hover:text-primary-foreground"
-            >
-              <component :is="CATEGORY_ICONS[place.category]" class="h-[18px] w-[18px]" />
-            </span>
-            <span class="rounded-full bg-muted px-2 py-0.5 text-[10.5px] text-muted-foreground">
-              {{ place.km.toFixed(1) }} กม.
-            </span>
+            <div class="relative h-[280px] bg-muted sm:h-[300px] lg:h-[372px] xl:h-[416px]">
+              <LongdoMap
+                :center="refPoint"
+                :places="results"
+                :selected="selectedId"
+                @select="selectPlace"
+              />
+            </div>
+
+            <div class="flex items-center justify-between gap-2 border-t border-border/70 px-4 py-2">
+              <p class="text-[10px] leading-snug text-muted-foreground">
+                <template v-if="selectedPlace">
+                  ปักหมุดหมายเลข {{ selectedNumber }} พร้อมชื่อไว้บนแผนที่แล้ว
+                </template>
+                <template v-else>แตะการ์ดหรือหมุดเพื่อซูมเข้าจุดนั้น</template>
+              </p>
+              <a
+                :href="longdoMapUrl"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="inline-flex shrink-0 items-center gap-1 text-[10px] font-medium text-primary hover:underline"
+              >
+                เปิดใน Longdo Map <ExternalLink class="h-2.5 w-2.5" />
+              </a>
+            </div>
           </div>
+        </aside>
 
-          <h2 class="mt-2.5 line-clamp-2 font-display text-[15px] leading-snug">
-            {{ place.name }}
-          </h2>
-          <p class="mt-1 line-clamp-2 text-[11px] leading-relaxed text-muted-foreground">
-            {{ place.address || "ไม่ระบุที่อยู่" }}
+        <div class="min-w-0 lg:order-1">
+          <p
+            v-if="usingSample && !pending"
+            class="rounded-2xl border border-primary/20 bg-primary/5 px-4 py-3 text-[11px] leading-relaxed text-muted-foreground"
+          >
+            ยังไม่ได้ตั้งค่าคีย์แผนที่ — ตั้ง
+            <code class="text-primary">NUXT_LONGDO_KEY</code> เพื่อดึงข้อมูลและแผนที่จาก Longdo Map
+            หรือ <code class="text-primary">NUXT_GOOGLE_PLACES_KEY</code> สำหรับ Google Maps<br />
+            ตอนนี้จึงแสดงรายการตัวอย่างเพื่อให้เห็นหน้าตาและการทำงานของหน้า
           </p>
 
-          <div class="mt-3 flex flex-wrap items-center gap-2 text-[10.5px]">
-            <span
-              v-if="place.rating"
-              class="inline-flex items-center gap-1 rounded-full bg-secondary/70 px-2 py-0.5 text-secondary-foreground"
-            >
-              <Star class="h-3 w-3 fill-gold text-gold" /> {{ place.rating.toFixed(1) }}
-              <span v-if="place.reviews" class="text-muted-foreground">({{ place.reviews }})</span>
-            </span>
-            <span
-              v-if="place.openNow !== undefined"
-              class="inline-flex items-center gap-1 rounded-full px-2 py-0.5"
-              :class="
-                place.openNow
-                  ? 'bg-primary/10 text-primary'
-                  : 'bg-muted text-muted-foreground'
-              "
-            >
-              <Clock class="h-3 w-3" /> {{ place.openNow ? "เปิดอยู่" : "ปิดอยู่" }}
-            </span>
+          <div class="mt-4 flex flex-wrap items-center justify-between gap-2 first:mt-0">
+            <p class="text-[11px] text-muted-foreground">
+              {{ pending ? "กำลังโหลด…" : `${results.length} สถานที่ · เรียงตามระยะทาง` }}
+            </p>
+            <p class="hidden text-[10.5px] text-muted-foreground sm:block">
+              หมายเลขหมุดตรงกับลำดับในการ์ด
+            </p>
           </div>
 
-          <a
-            v-if="place.mapsUrl"
-            :href="place.mapsUrl"
-            target="_blank"
-            rel="noopener noreferrer"
-            class="mt-3 inline-flex items-center gap-1 text-[11px] font-medium text-primary hover:underline"
-          >
-            {{ mapLinkLabel }} <ExternalLink class="h-3 w-3" />
-          </a>
-        </article>
-      </div>
+          <!-- loading -->
+          <div v-if="pending" class="mt-4 grid gap-4 sm:grid-cols-2">
+            <div v-for="n in 6" :key="n" class="h-40 animate-pulse rounded-3xl bg-muted" />
+          </div>
 
-      <p
-        v-else
-        class="mt-4 rounded-3xl border border-dashed border-border bg-card/60 p-8 text-center text-sm text-muted-foreground"
-      >
-        ไม่พบสถานที่ในหมวดนี้รอบจุดอ้างอิง ลองเลือกจุดอ้างอิงอื่นหรือใช้ตำแหน่งของคุณ
-      </p>
+          <!-- error -->
+          <div
+            v-else-if="error"
+            class="mt-4 rounded-3xl border border-destructive/30 bg-card p-6 shadow-soft"
+          >
+            <h2 class="font-display text-base">โหลดข้อมูลไม่สำเร็จ</h2>
+            <p class="mt-1 text-xs leading-relaxed text-muted-foreground">{{ errorMessage }}</p>
+            <button
+              type="button"
+              class="mt-4 inline-flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-[13px] font-medium text-primary-foreground shadow-soft"
+              @click="refresh()"
+            >
+              ลองอีกครั้ง
+            </button>
+          </div>
+
+          <!-- results -->
+          <div v-else-if="results.length" class="mt-4 grid gap-4 sm:grid-cols-2">
+            <article
+              v-for="(place, index) in results"
+              :key="place.id"
+              class="group relative cursor-pointer overflow-hidden rounded-3xl border bg-card p-4 shadow-soft transition duration-300 hover:-translate-y-1 hover:border-primary/35 hover:shadow-lift focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+              :class="
+                selectedId === place.id
+                  ? 'border-primary/60 ring-2 ring-primary/20'
+                  : 'border-border/80'
+              "
+              role="button"
+              tabindex="0"
+              :aria-pressed="selectedId === place.id"
+              :aria-label="`ดูหมุด ${index + 1} บนแผนที่: ${place.name}`"
+              @click="selectPlace(place.id)"
+              @keydown.enter.prevent="selectPlace(place.id)"
+              @keydown.space.prevent="selectPlace(place.id)"
+            >
+              <div class="flex items-start justify-between gap-2">
+                <div class="flex items-center gap-2">
+                  <span
+                    class="grid h-10 w-10 place-items-center rounded-xl bg-secondary text-primary transition group-hover:bg-primary group-hover:text-primary-foreground"
+                  >
+                    <component :is="CATEGORY_ICONS[place.category]" class="h-[18px] w-[18px]" />
+                  </span>
+                  <span
+                    class="grid h-5 w-5 place-items-center rounded-full text-[10px] font-semibold transition"
+                    :class="
+                      selectedId === place.id
+                        ? 'bg-primary text-primary-foreground'
+                        : 'bg-muted text-muted-foreground'
+                    "
+                  >
+                    {{ index + 1 }}
+                  </span>
+                </div>
+                <span class="rounded-full bg-muted px-2 py-0.5 text-[10.5px] text-muted-foreground">
+                  {{ place.km.toFixed(1) }} กม.
+                </span>
+              </div>
+
+              <h2 class="mt-2.5 line-clamp-2 font-display text-[15px] leading-snug">
+                {{ place.name }}
+              </h2>
+              <p class="mt-1 line-clamp-2 text-[11px] leading-relaxed text-muted-foreground">
+                {{ place.address || "ไม่ระบุที่อยู่" }}
+              </p>
+
+              <div class="mt-3 flex flex-wrap items-center gap-2 text-[10.5px]">
+                <span
+                  v-if="place.rating"
+                  class="inline-flex items-center gap-1 rounded-full bg-secondary/70 px-2 py-0.5 text-secondary-foreground"
+                >
+                  <Star class="h-3 w-3 fill-gold text-gold" /> {{ place.rating.toFixed(1) }}
+                  <span v-if="place.reviews" class="text-muted-foreground">({{ place.reviews }})</span>
+                </span>
+                <span
+                  v-if="place.openNow !== undefined"
+                  class="inline-flex items-center gap-1 rounded-full px-2 py-0.5"
+                  :class="
+                    place.openNow ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'
+                  "
+                >
+                  <Clock class="h-3 w-3" /> {{ place.openNow ? "เปิดอยู่" : "ปิดอยู่" }}
+                </span>
+              </div>
+
+              <a
+                v-if="place.mapsUrl"
+                :href="place.mapsUrl"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="mt-3 inline-flex items-center gap-1 text-[11px] font-medium text-primary hover:underline"
+                @click.stop
+              >
+                {{ mapLinkLabel }} <ExternalLink class="h-3 w-3" />
+              </a>
+            </article>
+          </div>
+
+          <p
+            v-else
+            class="mt-4 rounded-3xl border border-dashed border-border bg-card/60 p-8 text-center text-sm text-muted-foreground"
+          >
+            ไม่พบสถานที่ในหมวดนี้รอบจุดอ้างอิง ลองเลือกจุดอ้างอิงอื่นหรือใช้ตำแหน่งของคุณ
+          </p>
+        </div>
+      </div>
 
       <p class="mt-8 text-[10.5px] leading-relaxed text-muted-foreground">
         ข้อมูลสถานที่จาก
@@ -302,17 +428,19 @@ function locate() {
           target="_blank"
           rel="noopener noreferrer"
           class="text-primary hover:underline"
-        >Longdo Map (POI API)</a>
+          >Longdo Map (POI API)</a
+        >
         <a
           v-else-if="source === 'google'"
           href="https://maps.google.com"
           target="_blank"
           rel="noopener noreferrer"
           class="text-primary hover:underline"
-        >Google Maps (Places API)</a>
+          >Google Maps (Places API)</a
+        >
         <span v-else>ชุดข้อมูลตัวอย่าง</span>
-        · ระยะทางคำนวณจากจุดอ้างอิงแบบเส้นตรง · ราคาและเวลาเปิด-ปิดอาจเปลี่ยนแปลง
-        ควรตรวจสอบอีกครั้งก่อนเดินทาง
+        · แผนที่ 3D จาก Longdo Map · ระยะทางคำนวณจากจุดอ้างอิงแบบเส้นตรง ·
+        ราคาและเวลาเปิด-ปิดอาจเปลี่ยนแปลง ควรตรวจสอบอีกครั้งก่อนเดินทาง
       </p>
     </main>
   </div>
